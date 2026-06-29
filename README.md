@@ -33,6 +33,60 @@ Query Tool → Researcher → Designer ⇄ Judge (loop) → reveal.js deck
 7. **Render** — reveal.js HTML now; a PPTX adapter implements the same renderer
    interface later.
 
+## Install as a Claude Code skill
+
+### Global install (skill available in every Claude Code session)
+
+```bash
+git clone https://github.com/carlosValerio5/slide-agent.git
+cd slide-agent
+bash setup.sh
+```
+
+`setup.sh` does three things:
+1. `pip install -e .` — installs the `slide` CLI and its dependencies
+2. Copies `SKILL.md` and `plugin.json` to `~/.claude/skills/slides/`
+3. Appends a trigger entry to `~/.claude/CLAUDE.md` so Claude Code invokes the skill automatically when you type `/slides`
+
+Restart Claude Code, then use it from any project:
+
+```
+/slides my-notes.md
+/slides src/main.py --no-agent
+```
+
+### Project-only install (skill scoped to one repo)
+
+If you only want `/slides` available inside a specific project, skip `setup.sh` and configure it manually:
+
+**1. Install the Python package** (once, into your environment):
+
+```bash
+cd /path/to/slide-agent
+pip install -e .
+```
+
+**2. Copy the skill files** into your project's `.claude/skills/` directory:
+
+```bash
+mkdir -p /your/project/.claude/skills/slides/.claude-plugin
+cp /path/to/slide-agent/SKILL.md      /your/project/.claude/skills/slides/
+cp /path/to/slide-agent/.claude-plugin/plugin.json \
+                                       /your/project/.claude/skills/slides/.claude-plugin/
+```
+
+**3. Add the trigger** to your project's `CLAUDE.md` (create it if it doesn't exist):
+
+```markdown
+# slides
+- **slides** (`.claude/skills/slides/SKILL.md`) - build slide decks from files. Trigger: `/slides`
+When the user types `/slides`, invoke the Skill tool with `skill: "slides"` before doing anything else.
+```
+
+Now `/slides` works only when Claude Code is open inside that project.
+
+---
+
 ## Run it locally
 
 ### Backend (FastAPI)

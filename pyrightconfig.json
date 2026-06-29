@@ -1,0 +1,7 @@
+{
+  "include": ["services", "tests"],
+  "extraPaths": ["."],
+  "reportMissingImports": "warning",
+  "venvPath": ".",
+  "venv": ".venv"
+}

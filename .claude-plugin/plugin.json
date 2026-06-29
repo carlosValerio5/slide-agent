@@ -1,0 +1,10 @@
+{
+  "name": "slides",
+  "version": "1.0.0",
+  "description": "Turn .md, .txt, or code files into trustworthy reveal.js slide presentations via a deterministic knowledge graph + judge agent workflow.",
+  "author": {
+    "name": "Carlos Valerio",
+    "email": "carlosvaleriocs@outlook.com"
+  },
+  "license": "MIT"
+}
