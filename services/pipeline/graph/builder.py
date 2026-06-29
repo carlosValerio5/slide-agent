@@ -1,54 +1,56 @@
 """Knowledge-graph builder: orchestrates the deterministic + agent-assisted
 passes and commits only validated, provenance-backed elements to the store.
 
-Order (per the plan):
-  1. deterministic pass  -> base graph
-  2. agent proposals     -> candidate nodes/edges (skipped if no API key)
-  3. deterministic validation + commit
+Order:
+  1. deterministic pass  → base graph (tree-sitter for code, regex for prose)
+  2. agent proposals     → prose files only (code is already handled deterministically)
+  3. validation + commit
 """
 from __future__ import annotations
 
 from services.shared import llm, ontology
 from services.shared.schemas import Document, Edge, GraphManifest, Node
 
-from . import deterministic, extract_agent, validate
+from . import deterministic, extract_agent, ts_extract, validate
 from .store import GraphStore
 
 
 def build_graph(
     store: GraphStore, documents: list[Document], use_agent: bool = True
 ) -> GraphManifest:
-    # persist documents/blocks first so the validator can check spans
     for doc in documents:
         store.add_document(doc)
 
-    # 1. deterministic pass (always trusted, but still validated for safety)
+    # 1. deterministic pass (tree-sitter for code, regex for prose)
     det_nodes, det_edges = deterministic.extract(documents)
 
-    # 2. agent proposals over body blocks
+    # Document nodes have no source blocks by design; handle them separately
+    doc_nodes = [n for n in det_nodes if n.type == "Document"]
+    non_doc_nodes = [n for n in det_nodes if n.type != "Document"]
+
+    # 2. LLM proposals for prose files only (tree-sitter covers code)
+    prose_docs = [d for d in documents if not ts_extract.is_code_file(d.filename)]
     agent_nodes: list[Node] = []
     agent_edges: list[Edge] = []
     agent_used = False
-    if use_agent and llm.available():
+
+    if use_agent and llm.available() and prose_docs:
         agent_used = True
         existing_labels = {n.label.lower(): n.id for n in det_nodes}
         body_blocks = [
-            b for doc in documents for b in doc.blocks if b.kind != "heading"
+            b for doc in prose_docs for b in doc.blocks if b.kind != "heading"
         ]
-        # batch to keep prompts bounded
         for i in range(0, len(body_blocks), 25):
             pn, pe = extract_agent.propose(body_blocks[i : i + 25], existing_labels)
             agent_nodes.extend(pn)
             agent_edges.extend(pe)
 
     # 3. validate + commit
-    #    deterministic nodes don't need span re-check (they came from the text);
-    #    agent nodes must have their label present in the cited block.
-    good_det_nodes, _ = validate.validate_nodes(det_nodes, store, require_span=False)
+    good_det_nodes, _ = validate.validate_nodes(non_doc_nodes, store, require_span=False)
     good_agent_nodes, _ = validate.validate_nodes(agent_nodes, store, require_span=True)
 
-    # merge nodes (agent proposals can enrich provenance of existing ids)
-    node_map: dict[str, Node] = {n.id: n for n in good_det_nodes}
+    # Document nodes bypass the validator (they have no source block by design)
+    node_map: dict[str, Node] = {n.id: n for n in doc_nodes + good_det_nodes}
     for n in good_agent_nodes:
         if n.id in node_map:
             existing = node_map[n.id]

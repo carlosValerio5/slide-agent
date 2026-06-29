@@ -15,7 +15,7 @@ def sample_text() -> str:
 def tmp_store():
     from services.pipeline.graph.store import GraphStore
 
-    path = tempfile.mktemp(suffix=".sqlite")
+    path = tempfile.mkdtemp()
     store = GraphStore(path)
     yield store
     store.close()

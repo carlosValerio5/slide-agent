@@ -19,7 +19,3 @@ MAX_DESIGN_ITERATIONS = int(os.environ.get("SLIDE_AGENT_MAX_ITERS", "3"))
 
 def project_dir(project_id: str) -> Path:
     return DATA_DIR / project_id
-
-
-def project_db(project_id: str) -> Path:
-    return project_dir(project_id) / "project.sqlite"

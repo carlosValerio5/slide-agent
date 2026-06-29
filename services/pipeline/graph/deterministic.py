@@ -1,13 +1,10 @@
-"""Deterministic, rule-based graph extraction (no LLM).
+"""Deterministic graph extraction — dispatches by file type.
 
-Given documents, produce a base graph with full provenance:
-  - Document + Section nodes from heading hierarchy (part_of edges)
-  - Concept nodes from capitalized noun phrases (mentions edges)
-  - Metric nodes from numeric/percent/currency patterns (mentions edges)
-  - Claim nodes from blocks that assert a metric (supports + about edges)
+  - Code files  → tree-sitter AST extraction (ts_extract)
+  - Prose files → rule-based regex extraction (headings, concepts, metrics, claims)
 
-This pass is intentionally conservative; the agent-assisted pass proposes
-additional structure that the validator checks before committing.
+The agent-assisted pass in builder.py runs only for prose files; tree-sitter
+provides the equivalent deterministic structure for code.
 """
 from __future__ import annotations
 
@@ -15,7 +12,7 @@ import re
 
 from services.shared.schemas import Document, Edge, Node
 
-from . import ids
+from . import ids, ts_extract
 
 # A capitalized phrase: one or more Capitalized words (allowing internal & / -).
 _CONCEPT = re.compile(r"\b([A-Z][a-zA-Z0-9]+(?:[ &/-][A-Z][a-zA-Z0-9]+)*)\b")
@@ -46,7 +43,6 @@ def extract(documents: list[Document]) -> tuple[list[Node], list[Edge]]:
     def add_node(n: Node) -> None:
         existing = nodes.get(n.id)
         if existing:
-            # merge provenance, keep deterministic ordering
             merged = sorted(set(existing.source_block_ids) | set(n.source_block_ids))
             existing.source_block_ids = merged
         else:
@@ -61,6 +57,14 @@ def extract(documents: list[Document]) -> tuple[list[Node], list[Edge]]:
             edges[e.id] = e
 
     for doc in documents:
+        if ts_extract.is_code_file(doc.filename):
+            ts_nodes, ts_edges = ts_extract.extract_file(doc)
+            for n in ts_nodes:
+                add_node(n)
+            for e in ts_edges:
+                add_edge(e)
+            continue
+        # prose path below
         add_node(
             Node(
                 id=doc.document_id,

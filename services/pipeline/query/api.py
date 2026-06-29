@@ -13,6 +13,7 @@ import networkx as nx
 from services.shared.schemas import Block, Edge, Node
 
 from ..graph.store import GraphStore
+from .vicinity import score as _vicinity_score
 
 
 class GraphQuery:
@@ -133,3 +134,17 @@ class GraphQuery:
             if needle in doc.raw_text.lower():
                 return True
         return False
+
+    def vicinity(
+        self, seed_ids: list[str], max_hops: int = 2
+    ) -> list[tuple[Node, float]]:
+        """Return (node, score) pairs ranked by proximity to seeds.
+
+        score = 1/(1+min_hops), edges treated as undirected. Seeds score 1.0.
+        """
+        return _vicinity_score(
+            self.store.all_nodes(),
+            self.store.all_edges(),
+            seed_ids,
+            max_hops=max_hops,
+        )

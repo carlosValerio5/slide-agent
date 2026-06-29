@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from services.pipeline.graph.store import GraphStore
-from services.pipeline.ingest.loaders import SUPPORTED_SUFFIXES
+from services.pipeline.ingest.loaders import ALL_SUPPORTED_SUFFIXES
 from services.pipeline.workflow import run_pipeline
 from services.pipeline.workflow.inbox import answer_question
 from services.shared import config, llm
@@ -37,10 +37,10 @@ _running: dict[str, threading.Thread] = {}
 
 
 def _store(project_id: str) -> GraphStore:
-    db = config.project_db(project_id)
-    if not db.exists():
+    pdir = config.project_dir(project_id)
+    if not (pdir / "graph.json").exists():
         raise HTTPException(404, "project not found")
-    return GraphStore(db)
+    return GraphStore(pdir)
 
 
 # --------------------------------------------------------------------------- #
@@ -54,7 +54,7 @@ def create_project():
     pdir = config.project_dir(pid)
     (pdir / "files").mkdir(parents=True, exist_ok=True)
     (pdir / "artifacts").mkdir(parents=True, exist_ok=True)
-    store = GraphStore(config.project_db(pid))
+    store = GraphStore(config.project_dir(pid))
     store.set_run_state("created", "Project created", 0.0)
     store.close()
     return {"project_id": pid}
@@ -68,7 +68,7 @@ async def upload_files(pid: str, files: list[UploadFile]):
     saved = []
     for f in files:
         suffix = Path(f.filename or "").suffix.lower()
-        if suffix not in SUPPORTED_SUFFIXES:
+        if suffix not in ALL_SUPPORTED_SUFFIXES:
             raise HTTPException(400, f"unsupported file type: {f.filename}")
         content = (await f.read()).decode("utf-8", errors="replace")
         (pdir / "files" / (f.filename or "untitled.txt")).write_text(content, encoding="utf-8")
@@ -93,7 +93,7 @@ def build(pid: str, opts: BuildOpts | None = None):
     files = [(p.name, p.read_text(encoding="utf-8")) for p in sorted(files_dir.iterdir()) if p.is_file()]
 
     def worker():
-        store = GraphStore(config.project_db(pid))
+        store = GraphStore(config.project_dir(pid))
         try:
             run_pipeline(store, files, pdir / "artifacts", use_agent=use_agent)
         except Exception as exc:  # surface failures via run_state
@@ -114,13 +114,13 @@ def build(pid: str, opts: BuildOpts | None = None):
 
 @app.get("/projects/{pid}/events")
 async def events(pid: str):
-    if not config.project_db(pid).exists():
+    if not (config.project_dir(pid) / "graph.json").exists():
         raise HTTPException(404, "project not found")
 
     async def stream():
         last = None
         while True:
-            store = GraphStore(config.project_db(pid))
+            store = GraphStore(config.project_dir(pid))
             state = store.get_run_state()
             store.close()
             if state and state != last:

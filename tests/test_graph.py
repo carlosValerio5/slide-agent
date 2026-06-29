@@ -8,7 +8,7 @@ from services.shared import ontology
 
 
 def _build(text):
-    store = GraphStore(tempfile.mktemp(suffix=".sqlite"))
+    store = GraphStore(tempfile.mkdtemp())
     build_graph(store, [load_text("sample.md", text)], use_agent=False)
     nodes = [(n.id, n.type, n.label) for n in store.all_nodes()]
     edges = [(e.src, e.type, e.dst) for e in store.all_edges()]

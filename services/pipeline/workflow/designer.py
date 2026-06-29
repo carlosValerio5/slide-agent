@@ -18,8 +18,10 @@ from __future__ import annotations
 import re
 from typing import Callable
 
+from services.pipeline.graph import ids as _ids
 from services.pipeline.graph.store import GraphStore
 from services.pipeline.query import GraphQuery
+from services.pipeline.query.vicinity import score as _vicinity_score
 from services.shared import llm
 from services.shared.design_philosophy import DesignPhilosophy
 from services.shared.schemas import (
@@ -97,36 +99,42 @@ def _section_slides(doc, store: GraphStore, query: GraphQuery, philo) -> list[Sl
     slides: list[Slide] = []
     current_heading = None
     current_blocks: list = []
+    current_sec_id: str | None = None
 
     def flush() -> None:
-        nonlocal current_heading, current_blocks
+        nonlocal current_heading, current_blocks, current_sec_id
         if current_heading is None and not current_blocks:
             return
         title = current_heading.text if current_heading else doc.title
         sid = "slide_" + (current_heading.block_id if current_heading else doc.document_id)
-        elements = _bullets_from_blocks(current_blocks, store, philo)
+        elements = _bullets_from_blocks(current_blocks, store, philo, current_sec_id)
         if elements:
-            slides.append(Slide(id=sid.replace(":", "_"), layout="bullets", title=title, elements=elements))
+            slides.append(
+                Slide(id=sid.replace(":", "_"), layout="bullets", title=title, elements=elements)
+            )
         current_heading = None
         current_blocks = []
+        current_sec_id = None
 
     for block in doc.blocks:
         if block.kind == "heading":
             flush()
             current_heading = block
+            current_sec_id = _ids.section_id(block.block_id)
         else:
             current_blocks.append(block)
     flush()
     return slides
 
 
-def _bullets_from_blocks(blocks, store: GraphStore, philo) -> list[ContentElement]:
+def _bullets_from_blocks(
+    blocks, store: GraphStore, philo, sec_id: str | None = None
+) -> list[ContentElement]:
     elements: list[ContentElement] = []
     for block in blocks:
         if len(elements) >= philo.max_bullets_per_slide:
             break
-        citation = _cite_for_block(store, block.block_id)
-        # one bullet per list item; one bullet per sentence for paragraphs
+        citation = _cite_for_block(store, block.block_id, sec_id)
         if block.kind == "paragraph":
             sentences = [s.strip() for s in _SENT.split(block.text) if s.strip()]
         else:
@@ -145,17 +153,32 @@ def _bullets_from_blocks(blocks, store: GraphStore, philo) -> list[ContentElemen
     return elements
 
 
-def _cite_for_block(store: GraphStore, block_id: str) -> Citation | None:
-    """Cite the most specific graph node backed by this block."""
+def _cite_for_block(
+    store: GraphStore, block_id: str, sec_id: str | None = None
+) -> Citation | None:
+    """Cite the most relevant graph node backed by this block.
+
+    When a section node id is provided, uses vicinity scoring (BFS from the
+    section) to prefer topologically close nodes. Falls back to type-priority
+    ranking when no section context is available.
+    """
     priority = {"Claim": 0, "Metric": 1, "Event": 2, "Concept": 3, "Section": 4}
-    best = None
-    best_rank = 99
-    for n in store.all_nodes():
-        if block_id in n.source_block_ids:
-            rank = priority.get(n.type, 50)
-            if rank < best_rank:
-                best, best_rank = n, rank
-    return Citation(kind="graph", ref=best.id) if best else None
+    block_nodes = [n for n in store.all_nodes() if block_id in n.source_block_ids]
+    if not block_nodes:
+        return None
+
+    if sec_id is None:
+        best = min(block_nodes, key=lambda n: priority.get(n.type, 50))
+        return Citation(kind="graph", ref=best.id)
+
+    # Rank by vicinity from the section, then break ties by type priority
+    scored = _vicinity_score(store.all_nodes(), store.all_edges(), [sec_id], max_hops=3)
+    vicinity_rank = {n.id: s for n, s in scored}
+    best = max(
+        block_nodes,
+        key=lambda n: (vicinity_rank.get(n.id, 0.0), -priority.get(n.type, 50)),
+    )
+    return Citation(kind="graph", ref=best.id)
 
 
 def _research_slide(notes: list[ResearchNote]) -> Slide:
