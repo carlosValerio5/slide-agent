@@ -77,7 +77,7 @@ def build_graph(
         node_count=len(node_map),
         edge_count=len(edge_map),
         agent_assisted=agent_used,
-        model="claude-cli" if agent_used else None,
+        model=f"{llm.backend_name()}-cli" if agent_used else None,
     )
     store.set_manifest(manifest)
     return manifest

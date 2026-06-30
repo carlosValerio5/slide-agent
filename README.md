@@ -33,22 +33,41 @@ Query Tool → Researcher → Designer ⇄ Judge (loop) → reveal.js deck
 7. **Render** — reveal.js HTML now; a PPTX adapter implements the same renderer
    interface later.
 
-## Install as a Claude Code skill
+## Install as a skill (Cursor or Claude Code)
 
-### Global install (skill available in every Claude Code session)
+Slide Agent runs as an **agent skill** on either platform. The agentic steps go
+through whichever CLI is on your PATH — **`cursor-agent`** for Cursor or
+**`claude`** for Claude Code — so no API key is needed in this process; each CLI
+carries its own auth. The deterministic graph + deck still build offline when
+neither CLI is present.
+
+The same `slide` CLI and the same deterministic pipeline power both platforms.
+Only the agent backend differs, selected with `SLIDE_AGENT_LLM`:
+
+| Env var | Values | Default | Purpose |
+| --- | --- | --- | --- |
+| `SLIDE_AGENT_LLM` | `claude`, `cursor`, `auto` | `auto` | Pick the agent backend. `auto` prefers `claude`, then `cursor-agent`. |
+| `SLIDE_AGENT_CLAUDE_MODEL` | model id | unset | Override the Claude Code model (else the CLI default). |
+| `SLIDE_AGENT_CURSOR_MODEL` | model id (e.g. `gpt-5`, `sonnet-4`) | unset | Override the Cursor model (else the CLI default). |
+
+### Global install (skill available in every session)
 
 ```bash
 git clone https://github.com/carlosValerio5/slide-agent.git
 cd slide-agent
-bash setup.sh
+bash setup.sh            # installs for both Cursor and Claude Code
+# or target one platform:
+bash setup.sh cursor
+bash setup.sh claude
 ```
 
-`setup.sh` does three things:
-1. `pip install -e .` — installs the `slide` CLI and its dependencies
-2. Copies `SKILL.md` and `plugin.json` to `~/.claude/skills/slides/`
-3. Appends a trigger entry to `~/.claude/CLAUDE.md` so Claude Code invokes the skill automatically when you type `/slides`
+`setup.sh` always runs `pip install -e .` (the `slide` CLI + deps), then:
+- **Cursor** — copies `.cursor/skills/slides/SKILL.md` to `~/.cursor/skills/slides/`.
+  Cursor auto-discovers the skill from its `description`; invoke it with `/slides`.
+- **Claude Code** — copies `SKILL.md` + `plugin.json` to `~/.claude/skills/slides/`
+  and appends a `/slides` trigger to `~/.claude/CLAUDE.md`.
 
-Restart Claude Code, then use it from any project:
+Restart your agent, then use it from any project:
 
 ```
 /slides my-notes.md
@@ -57,16 +76,27 @@ Restart Claude Code, then use it from any project:
 
 ### Project-only install (skill scoped to one repo)
 
-If you only want `/slides` available inside a specific project, skip `setup.sh` and configure it manually:
-
-**1. Install the Python package** (once, into your environment):
+If you only want `/slides` available inside a specific project, skip `setup.sh`
+and configure it manually. Install the Python package once into your
+environment:
 
 ```bash
 cd /path/to/slide-agent
 pip install -e .
 ```
 
-**2. Copy the skill files** into your project's `.claude/skills/` directory:
+**Cursor** — copy the skill into the project's `.cursor/skills/` directory:
+
+```bash
+mkdir -p /your/project/.cursor/skills/slides
+cp /path/to/slide-agent/.cursor/skills/slides/SKILL.md \
+                                       /your/project/.cursor/skills/slides/SKILL.md
+```
+
+Cursor picks up the skill on startup and surfaces it via `/slides`.
+
+**Claude Code** — copy the skill files into the project's `.claude/skills/`
+directory and register the trigger:
 
 ```bash
 mkdir -p /your/project/.claude/skills/slides/.claude-plugin
@@ -75,7 +105,7 @@ cp /path/to/slide-agent/.claude-plugin/plugin.json \
                                        /your/project/.claude/skills/slides/.claude-plugin/
 ```
 
-**3. Add the trigger** to your project's `CLAUDE.md` (create it if it doesn't exist):
+Add the trigger to your project's `CLAUDE.md` (create it if it doesn't exist):
 
 ```markdown
 # slides
@@ -83,7 +113,7 @@ cp /path/to/slide-agent/.claude-plugin/plugin.json \
 When the user types `/slides`, invoke the Skill tool with `skill: "slides"` before doing anything else.
 ```
 
-Now `/slides` works only when Claude Code is open inside that project.
+Now `/slides` works only when the agent is open inside that project.
 
 ---
 
@@ -129,7 +159,7 @@ inbox.
 
 ```
 services/
-  shared/      schemas, closed ontology, design philosophy, Anthropic wrapper
+  shared/      schemas, closed ontology, design philosophy, agent CLI wrapper (claude / cursor-agent)
   pipeline/
     ingest/    loaders + deterministic block segmentation
     graph/     deterministic builder, agent-assisted extraction, validator, SQLite store
