@@ -1,8 +1,8 @@
 ---
 name: slides
 description: "Use when the user invokes /slides to turn .md, .txt, or code files into slide presentations via a deterministic knowledge graph + judge agent workflow."
-version: 1.1.0
-argument-hint: "[file...] [--audience <a>] [--focus <f>] [--no-agent]"
+version: 1.2.0
+argument-hint: "[file...] [--audience <a>] [--focus <f>] [--density <d>] [--length <l>] [--detail <dt>] [--no-agent]"
 allowed-tools: ["Bash", "Read"]
 ---
 
@@ -39,29 +39,47 @@ Before running, ask the user these two questions conversationally:
 If the user doesn't answer or says "default", use `general` and `technical`.
 Map the answers to `--audience` and `--focus` flags for the CLI.
 
-### Step 3 — Resolve input files
+### Step 3 — Ask design style questions
+
+Ask the user these three questions conversationally:
+
+1. **Slide density** — How many bullet points per slide?
+   Options: `light` (3 bullets), `balanced` (5 bullets), `dense` (6 bullets)
+   Default: `balanced`
+
+2. **Deck length** — How many slides in total?
+   Options: `brief` (up to 12 slides), `standard` (up to 20 slides), `comprehensive` (up to 30 slides)
+   Default: `standard`
+
+3. **Bullet detail** — How long should each bullet point be?
+   Options: `headline` (≤8 words), `summary` (≤12 words), `detailed` (≤16 words)
+   Default: `summary`
+
+If the user skips a question or says "default", omit that flag. Pass answers as `--density`, `--length`, and `--detail` flags to the CLI.
+
+### Step 4 — Resolve input files
 
 If `$ARGUMENTS` contains file paths, validate that each exists. If a file is missing, report the exact path and stop.
 
 If `$ARGUMENTS` is empty (no file paths), the CLI will auto-discover files in the current directory — no action needed.
 
-### Step 4 — Run the pipeline
+### Step 5 — Run the pipeline
 
 ```bash
-slide $ARGUMENTS --audience <answer1> --focus <answer2> --out slide-out/ 2>&1
+slide $ARGUMENTS --audience <answer1> --focus <answer2> --density <answer3> --length <answer4> --detail <answer5> --out slide-out/ 2>&1
 ```
 
-If no audience/focus was provided, omit those flags (defaults apply).
+Omit any flag the user didn't answer (defaults apply).
 Print progress lines to the user as they appear (`[XX%] ...` and `[discover] ...`).
 
-### Step 5 — Parse the result
+### Step 6 — Parse the result
 
 After the command finishes, find the line starting with `SLIDE_RESULT:` and parse the JSON after the colon.
 
 - If `ok` is false: show the error and stop.
 - If `ok` is true: proceed.
 
-### Step 6 — Open the deck
+### Step 7 — Open the deck
 
 ```bash
 uname -s
@@ -72,7 +90,7 @@ Open `deck_path` from the result:
 - Linux: `xdg-open "<deck_path>" 2>/dev/null || echo "Deck ready at: <deck_path>"`
 - Windows: `start "" "<deck_path>"`
 
-### Step 7 — Surface open questions
+### Step 8 — Surface open questions
 
 If `open_questions` is non-empty, list them:
 

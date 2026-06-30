@@ -1,6 +1,6 @@
 """CLI entry point for the slide-agent skill.
 
-Usage: slide [file...] [--audience <a>] [--focus <f>] [--no-agent] [--out <dir>]
+Usage: slide [file...] [--audience <a>] [--focus <f>] [--density <d>] [--length <l>] [--detail <dt>] [--no-agent] [--out <dir>]
 
 When no files are given, the tool auto-discovers supported files in the current
 directory recursively (skipping noise dirs, large files, and binaries).
@@ -22,6 +22,9 @@ from pathlib import Path
 
 _AUDIENCE_CHOICES = ["stakeholders", "engineers", "general", "investors"]
 _FOCUS_CHOICES = ["technical", "business"]
+_DENSITY_CHOICES = ["light", "balanced", "dense"]
+_LENGTH_CHOICES = ["brief", "standard", "comprehensive"]
+_DETAIL_CHOICES = ["headline", "summary", "detailed"]
 
 
 def _prompt_choice(prompt: str, choices: list[str], default: str) -> str:
@@ -58,6 +61,18 @@ def main() -> None:
         help="Presentation focus: " + ", ".join(_FOCUS_CHOICES),
     )
     parser.add_argument(
+        "--density", choices=_DENSITY_CHOICES, metavar="DENSITY",
+        help="Bullets per slide: " + ", ".join(_DENSITY_CHOICES),
+    )
+    parser.add_argument(
+        "--length", choices=_LENGTH_CHOICES, metavar="LENGTH",
+        help="Deck length: " + ", ".join(_LENGTH_CHOICES),
+    )
+    parser.add_argument(
+        "--detail", choices=_DETAIL_CHOICES, metavar="DETAIL",
+        help="Words per bullet: " + ", ".join(_DETAIL_CHOICES),
+    )
+    parser.add_argument(
         "--no-agent", action="store_true", help="Skip LLM steps (fully offline)"
     )
     parser.add_argument(
@@ -76,7 +91,13 @@ def main() -> None:
     from services.pipeline.ingest.discover import discover
     from services.pipeline.ingest.loaders import ALL_SUPPORTED_SUFFIXES
     from services.pipeline.workflow import run_pipeline
-    from services.shared.design_philosophy import AudienceProfile
+    from services.shared.design_philosophy import (
+        DEFAULT_PHILOSOPHY,
+        DENSITY_PRESETS,
+        DETAIL_PRESETS,
+        LENGTH_PRESETS,
+        AudienceProfile,
+    )
 
     # ------------------------------------------------------------------ #
     # Resolve audience & focus (blocking when interactive, silent otherwise)
@@ -101,6 +122,43 @@ def main() -> None:
         audience=audience_str or "general",
         focus=focus_str or "technical",
     )
+
+    # ------------------------------------------------------------------ #
+    # Resolve design style (blocking when interactive, silent otherwise)
+    # ------------------------------------------------------------------ #
+    density = args.density
+    length = args.length
+    detail = args.detail
+    if not args.no_agent and sys.stdin.isatty():
+        if density is None:
+            density = _prompt_choice(
+                "Slide density (bullets per slide)?",
+                _DENSITY_CHOICES,
+                default="balanced",
+            )
+        if length is None:
+            length = _prompt_choice(
+                "Deck length (total slides)?",
+                _LENGTH_CHOICES,
+                default="standard",
+            )
+        if detail is None:
+            detail = _prompt_choice(
+                "Bullet detail level (words per bullet)?",
+                _DETAIL_CHOICES,
+                default="summary",
+            )
+
+    # Build philosophy with any user overrides applied on top of defaults.
+    # run_pipeline will call audience.tune() afterwards, which only adjusts
+    # tone/principles — the numeric fields set here are preserved.
+    philosophy = DEFAULT_PHILOSOPHY.model_copy()
+    if density:
+        philosophy.max_bullets_per_slide = DENSITY_PRESETS[density]
+    if length:
+        philosophy.max_slides = LENGTH_PRESETS[length]
+    if detail:
+        philosophy.max_words_per_bullet = DETAIL_PRESETS[detail]
 
     # ------------------------------------------------------------------ #
     # Resolve input files (explicit paths or auto-discovery)
@@ -162,6 +220,7 @@ def main() -> None:
             store,
             file_pairs,
             out_dir,
+            philosophy=philosophy,
             use_agent=not args.no_agent,
             on_progress=on_progress,
             audience=profile,
