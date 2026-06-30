@@ -6,6 +6,8 @@ can be both fed into a prompt and mechanically checked.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -64,3 +66,90 @@ class DesignPhilosophy(BaseModel):
 
 
 DEFAULT_PHILOSOPHY = DesignPhilosophy()
+
+
+_AUDIENCE_LABELS = {
+    "stakeholders": "company stakeholders",
+    "engineers": "software engineers",
+    "general": "a general audience",
+    "investors": "investors",
+}
+
+_GUIDANCE: dict[tuple[str, str], str] = {
+    ("engineers", "technical"): (
+        "Audience are software engineers. Emphasize architecture, key abstractions, "
+        "data flow, and notable design decisions. Use precise component names from "
+        "the graph. Moderate jargon is fine. Show how components connect."
+    ),
+    ("engineers", "business"): (
+        "Audience are software engineers but focus is business outcomes. Frame "
+        "technical choices in terms of their product impact and trade-offs."
+    ),
+    ("general", "technical"): (
+        "General audience. Explain what the system does in plain language. "
+        "Use analogies over implementation detail. Minimize jargon. "
+        "Lead each slide with the takeaway, not the mechanism."
+    ),
+    ("general", "business"): (
+        "General audience, business framing. Focus on what the system enables, "
+        "outcomes it delivers, and problems it solves. No code-level detail."
+    ),
+    ("stakeholders", "technical"): (
+        "Company stakeholders. Provide a capabilities overview with light "
+        "architectural context. Connect technical components to business value."
+    ),
+    ("stakeholders", "business"): (
+        "Company stakeholders. Frame entirely around value, capabilities, and "
+        "outcomes. Avoid code-level detail. Lead every slide with the business outcome."
+    ),
+    ("investors", "technical"): (
+        "Investors with technical interest. Highlight technical differentiation, "
+        "scalability, and defensibility. Keep it crisp and business-relevant."
+    ),
+    ("investors", "business"): (
+        "Investors. Frame around value, market opportunity, outcomes, and "
+        "differentiation. Avoid code-level detail. Lead with the benefit per slide."
+    ),
+}
+
+
+class AudienceProfile(BaseModel):
+    audience: Literal["stakeholders", "engineers", "general", "investors"] = "general"
+    focus: Literal["technical", "business"] = "technical"
+
+    def label(self) -> str:
+        """Human label for use in the title slide."""
+        return _AUDIENCE_LABELS.get(self.audience, self.audience)
+
+    def subtitle(self) -> str:
+        return f"Prepared for {self.label()}"
+
+    def as_prompt(self) -> str:
+        """Concrete guidance injected into the narrator's system prompt."""
+        return _GUIDANCE.get(
+            (self.audience, self.focus),
+            "Present clearly and concisely for a general audience.",
+        )
+
+    def tune(self, philo: DesignPhilosophy) -> DesignPhilosophy:
+        """Return a copy of philo with tone/principles adjusted for this audience."""
+        copy = philo.model_copy()
+        if self.focus == "business":
+            copy.tone = "outcome-focused, plain language, no code-level detail"
+            copy.principles = [
+                "Lead every slide with the business outcome or benefit.",
+                "Prefer concrete capabilities over implementation mechanics.",
+                "Use short parallel bullets, not paragraphs.",
+                "Keep titles to a single line.",
+                "Maintain strong contrast and generous whitespace.",
+            ]
+        elif self.audience == "engineers":
+            copy.tone = "precise, technical, architecture-focused"
+            copy.principles = [
+                "One concept per slide; lead with the design decision or pattern.",
+                "Name components exactly as they appear in the codebase.",
+                "Use short parallel bullets, not paragraphs.",
+                "Keep titles to a single line.",
+                "Maintain strong contrast and generous whitespace.",
+            ]
+        return copy

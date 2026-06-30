@@ -1,6 +1,12 @@
 """CLI entry point for the slide-agent skill.
 
-Usage: slide <file1> [file2...] [--no-agent] [--out <dir>]
+Usage: slide [file...] [--audience <a>] [--focus <f>] [--no-agent] [--out <dir>]
+
+When no files are given, the tool auto-discovers supported files in the current
+directory recursively (skipping noise dirs, large files, and binaries).
+
+Audience and focus can be supplied as flags (non-interactive / skill path) or
+entered interactively when the CLI is run from a terminal.
 
 Prints progress lines: [20%] Building knowledge graph
 Prints final line:     SLIDE_RESULT:{"ok":true,"deck_path":"...","open_questions":[...]}
@@ -14,12 +20,43 @@ import sys
 import uuid
 from pathlib import Path
 
+_AUDIENCE_CHOICES = ["stakeholders", "engineers", "general", "investors"]
+_FOCUS_CHOICES = ["technical", "business"]
+
+
+def _prompt_choice(prompt: str, choices: list[str], default: str) -> str:
+    """Interactively ask the user to pick from choices; empty input → default."""
+    options = "/".join(
+        f"[{c}]" if c == default else c for c in choices
+    )
+    while True:
+        try:
+            raw = input(f"{prompt} ({options}): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return default
+        if not raw:
+            return default
+        if raw in choices:
+            return raw
+        print(f"  Please enter one of: {', '.join(choices)}", file=sys.stderr)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build a slide deck from text or code files."
     )
-    parser.add_argument("files", nargs="+", type=Path, metavar="FILE")
+    parser.add_argument(
+        "files", nargs="*", type=Path, metavar="FILE",
+        help="Files to include. Omit to auto-discover from the current directory.",
+    )
+    parser.add_argument(
+        "--audience", choices=_AUDIENCE_CHOICES, metavar="AUDIENCE",
+        help="Who will view this presentation: " + ", ".join(_AUDIENCE_CHOICES),
+    )
+    parser.add_argument(
+        "--focus", choices=_FOCUS_CHOICES, metavar="FOCUS",
+        help="Presentation focus: " + ", ".join(_FOCUS_CHOICES),
+    )
     parser.add_argument(
         "--no-agent", action="store_true", help="Skip LLM steps (fully offline)"
     )
@@ -36,29 +73,83 @@ def main() -> None:
     os.environ["SLIDE_AGENT_DATA"] = str(data_dir)
 
     from services.pipeline.graph.store import GraphStore
+    from services.pipeline.ingest.discover import discover
     from services.pipeline.ingest.loaders import ALL_SUPPORTED_SUFFIXES
     from services.pipeline.workflow import run_pipeline
+    from services.shared.design_philosophy import AudienceProfile
 
-    # Validate and load files
+    # ------------------------------------------------------------------ #
+    # Resolve audience & focus (blocking when interactive, silent otherwise)
+    # ------------------------------------------------------------------ #
+    audience_str = args.audience
+    focus_str = args.focus
+    if not args.no_agent and sys.stdin.isatty():
+        if audience_str is None:
+            audience_str = _prompt_choice(
+                "Who will view this presentation?",
+                _AUDIENCE_CHOICES,
+                default="general",
+            )
+        if focus_str is None:
+            focus_str = _prompt_choice(
+                "What's the focus of this presentation?",
+                _FOCUS_CHOICES,
+                default="technical",
+            )
+
+    profile = AudienceProfile(
+        audience=audience_str or "general",
+        focus=focus_str or "technical",
+    )
+
+    # ------------------------------------------------------------------ #
+    # Resolve input files (explicit paths or auto-discovery)
+    # ------------------------------------------------------------------ #
     file_pairs: list[tuple[str, str]] = []
-    for path in args.files:
-        if not path.exists():
-            print(f"Error: file not found: {path}", file=sys.stderr)
-            sys.exit(1)
-        if path.suffix.lower() not in ALL_SUPPORTED_SUFFIXES:
+
+    if args.files:
+        for path in args.files:
+            if not path.exists():
+                print(f"Error: file not found: {path}", file=sys.stderr)
+                sys.exit(1)
+            if path.suffix.lower() not in ALL_SUPPORTED_SUFFIXES:
+                print(
+                    f"Error: unsupported file type '{path.suffix}' ({path.name}). "
+                    f"Supported: {', '.join(sorted(ALL_SUPPORTED_SUFFIXES))}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            file_pairs.append((path.name, path.read_text(encoding="utf-8")))
+    else:
+        cwd = Path.cwd()
+        disc = discover(cwd)
+        if disc.total == 0:
             print(
-                f"Error: unsupported file type '{path.suffix}' ({path.name}). "
-                f"Supported: {', '.join(sorted(ALL_SUPPORTED_SUFFIXES))}",
+                f"Error: no supported files found under {cwd}. "
+                f"Pass file paths explicitly or run from a project directory.",
                 file=sys.stderr,
             )
             sys.exit(1)
-        file_pairs.append((path.name, path.read_text(encoding="utf-8")))
+
+        summary_parts = [f"{disc.total} files ({len(disc.code)} code, {len(disc.prose)} prose)"]
+        if disc.skipped_large:
+            summary_parts.append(f"{disc.skipped_large} too large skipped")
+        if disc.skipped_binary:
+            summary_parts.append(f"{disc.skipped_binary} binary skipped")
+        if disc.truncated:
+            summary_parts.append(f"truncated at {disc.total} — pass explicit paths to narrow")
+        print(f"[discover] {', '.join(summary_parts)}", file=sys.stderr, flush=True)
+
+        for path in disc.code + disc.prose:
+            file_pairs.append((path.name, path.read_text(encoding="utf-8")))
 
     if not file_pairs:
-        print("Error: no files provided", file=sys.stderr)
+        print("Error: no files to process", file=sys.stderr)
         sys.exit(1)
 
-    # One project dir per run (keeps runs isolated under .data/)
+    # ------------------------------------------------------------------ #
+    # Run the pipeline
+    # ------------------------------------------------------------------ #
     pid = uuid.uuid4().hex[:12]
     project_dir = data_dir / pid
     store = GraphStore(project_dir)
@@ -73,6 +164,7 @@ def main() -> None:
             out_dir,
             use_agent=not args.no_agent,
             on_progress=on_progress,
+            audience=profile,
         )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)

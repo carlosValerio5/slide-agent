@@ -15,7 +15,11 @@ from services.pipeline.graph.store import GraphStore
 from services.pipeline.ingest import load_text
 from services.pipeline.render import RevealRenderer
 from services.shared.config import MAX_DESIGN_ITERATIONS
-from services.shared.design_philosophy import DEFAULT_PHILOSOPHY, DesignPhilosophy
+from services.shared.design_philosophy import (
+    DEFAULT_PHILOSOPHY,
+    AudienceProfile,
+    DesignPhilosophy,
+)
 from services.shared.schemas import Document, Stage
 
 from . import designer, judge, researcher
@@ -31,9 +35,14 @@ def run_pipeline(
     philosophy: DesignPhilosophy = DEFAULT_PHILOSOPHY,
     use_agent: bool = True,
     on_progress: ProgressFn | None = None,
+    audience: AudienceProfile | None = None,
 ) -> dict:
     artifacts_dir = Path(artifacts_dir)
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    # Apply audience tuning to the philosophy (safe copy — doesn't mutate default)
+    profile = audience or AudienceProfile()
+    philosophy = profile.tune(philosophy)
 
     def progress(stage: Stage, message: str, pct: float) -> None:
         store.set_run_state(stage.value, message, pct)
@@ -63,8 +72,16 @@ def run_pipeline(
     deck = None
     revise_issues = None
     for i in range(MAX_DESIGN_ITERATIONS):
+        # On the final iteration force deterministic mode to guarantee a
+        # judge-passing deck regardless of what the narrative agent produced.
+        is_last = i == MAX_DESIGN_ITERATIONS - 1
+        iter_use_agent = use_agent and not is_last
+
         progress(Stage.designing, f"Designing slides (pass {i + 1})", 0.5 + 0.1 * i)
-        deck = designer.design(store, philosophy, notes, ask_user, revise_issues, use_agent=use_agent)
+        deck = designer.design(
+            store, philosophy, notes, ask_user, revise_issues,
+            use_agent=iter_use_agent, audience=profile,
+        )
         store.save_deck(deck)
 
         progress(Stage.judging, f"Verifying facts & design (pass {i + 1})", 0.6 + 0.1 * i)

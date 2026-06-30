@@ -23,7 +23,7 @@ from services.pipeline.graph.store import GraphStore
 from services.pipeline.query import GraphQuery
 from services.pipeline.query.vicinity import score as _vicinity_score
 from services.shared import llm
-from services.shared.design_philosophy import DesignPhilosophy
+from services.shared.design_philosophy import AudienceProfile, DesignPhilosophy
 from services.shared.schemas import (
     Citation,
     ContentElement,
@@ -31,6 +31,7 @@ from services.shared.schemas import (
     ResearchNote,
     Slide,
 )
+from . import narrator
 
 AskUser = Callable[..., str]
 
@@ -44,26 +45,31 @@ def design(
     ask_user: AskUser,
     revise_issues: list | None = None,
     use_agent: bool = True,
+    audience: AudienceProfile | None = None,
 ) -> Deck:
     query = GraphQuery(store)
     docs = store.list_documents()
     title = docs[0].title if docs else "Presentation"
 
-    # Async question: audience framing. Returns default immediately if unanswered.
-    audience = ask_user(
-        text="Who is the primary audience for this presentation?",
-        default="a general business audience",
-        options=["executives", "investors", "a general business audience", "technical team"],
-        affected_slide_ids=["slide_title"],
-    )
+    profile = audience or AudienceProfile()
+    deck = Deck(title=title, subtitle=profile.subtitle())
+    deck.slides.append(_title_slide(title, profile.label()))
 
-    deck = Deck(title=title, subtitle=f"Prepared for {audience}")
-    deck.slides.append(_title_slide(title, audience))
+    # Attempt narrative slides from the graph when LLM is available
+    content_slides = None
+    if use_agent and llm.available():
+        try:
+            content_slides = narrator.narrate(store, query, philosophy, profile)
+        except Exception:
+            content_slides = None
 
-    # one content slide per top-level section, in document order
-    for doc in docs:
-        for sec_slide in _section_slides(doc, store, query, philosophy):
-            deck.slides.append(sec_slide)
+    if content_slides:
+        deck.slides.extend(content_slides)
+    else:
+        # Deterministic fallback: one content slide per top-level section
+        for doc in docs:
+            for sec_slide in _section_slides(doc, store, query, philosophy):
+                deck.slides.append(sec_slide)
 
     # research appendix (external, clearly separated)
     if research_notes:
@@ -71,11 +77,13 @@ def design(
 
     _enforce_limits(deck, philosophy)
 
-    if use_agent and llm.available():
+    # Phrasing-only refine only on the deterministic path (narrator already
+    # produced final phrasing; running again would be redundant and costly).
+    if content_slides is None and use_agent and llm.available():
         try:
-            deck = _agent_refine(deck, philosophy, audience)
+            deck = _agent_refine(deck, philosophy, profile.label())
         except Exception:
-            pass  # keep the deterministic deck on any failure
+            pass
 
     return deck
 
