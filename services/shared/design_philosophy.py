@@ -67,6 +67,11 @@ class DesignPhilosophy(BaseModel):
 
 DEFAULT_PHILOSOPHY = DesignPhilosophy()
 
+# Preset mappings for CLI-friendly named choices → DesignPhilosophy numeric fields
+DENSITY_PRESETS: dict[str, int] = {"light": 3, "balanced": 5, "dense": 6}
+LENGTH_PRESETS: dict[str, int] = {"brief": 12, "standard": 20, "comprehensive": 30}
+DETAIL_PRESETS: dict[str, int] = {"headline": 8, "summary": 12, "detailed": 16}
+
 
 _AUDIENCE_LABELS = {
     "stakeholders": "company stakeholders",
